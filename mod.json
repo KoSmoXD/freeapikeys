@@ -3,11 +3,11 @@
   "gd": {
     "android": "2.2081"
   },
-  "version": "v0.1.0",
+  "version": "v0.2.0",
   "id": "trajectory.autoplayer",
-  "name": "Trajectory AutoPlayer Prototype",
+  "name": "Trajectory AutoPlayer (Cube Beta)",
   "developer": "Community Prototype",
-  "description": "Experimental trajectory-based jump planner for Android. Not a guaranteed level solver.",
+  "description": "Experimental cube-only obstacle-aware auto-jump with predicted trajectories. Not a universal level solver.",
   "tags": [
     "gameplay",
     "cheat"
@@ -15,7 +15,7 @@
   "settings": {
     "enabled": {
       "type": "bool",
-      "name": "Enable AutoPlayer",
+      "name": "Enable cube auto-jump",
       "default": false
     },
     "lookahead": {
