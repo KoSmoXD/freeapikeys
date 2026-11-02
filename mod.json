@@ -3,21 +3,16 @@
   "gd": {
     "android": "2.2081"
   },
-  "version": "v0.3.0",
+  "version": "v0.3.1",
   "id": "trajectory.autoplayer",
   "name": "Trajectory AutoPlayer (Cube Test)",
   "developer": "Community Prototype",
-  "description": "Experimental spike-aware cube autoplayer. Shows a diagnostics HUD and predicted paths. Not a universal level solver.",
+  "description": "Cube-mode auto-jump with a single Geode enable switch, trajectory paths and diagnostics; experimental.",
   "tags": [
     "gameplay",
     "cheat"
   ],
   "settings": {
-    "enabled": {
-      "type": "bool",
-      "name": "Enable cube auto-jump",
-      "default": false
-    },
     "lookahead": {
       "type": "float",
       "name": "Lookahead (seconds)",
