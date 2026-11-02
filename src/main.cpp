@@ -4,187 +4,267 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 using namespace geode::prelude;
 
-// EXPERIMENTAL cube-only hazard-aware jump assistant.
-// It queries actual damaging objects, compares approximate no-jump/jump paths,
-// and dispatches one-frame jump inputs. The simulation is NOT a perfect copy
-// of Geometry Dash physics; moving hazards, solids, portals and other modes
-// remain unsupported.
+// v0.3.0: Experimental forward cube auto-jumper.
+// Draws both hypothetical trajectories, detects upcoming GameObjectType::Hazard
+// and AnimatedHazard, and presses Jump automatically at a calculated approach
+// distance. It is not an exact collision simulator or a level-solving bot.
 class $modify(TrajectoryAutoPlayer, PlayLayer) {
     struct Fields {
         CCDrawNode* overlay = nullptr;
+        CCLabelBMFont* status = nullptr;
         bool held = false;
-        int holdFrames = 0;
-        float lastX = std::numeric_limits<float>::quiet_NaN();
-        float speed = 0.f;  // world units / second, measured from real movement
+        int pressFrames = 0;
+        int jumps = 0;
+        int scanTick = 0;
+        int statusTick = 0;
+        float previousX = std::numeric_limits<float>::quiet_NaN();
+        float measuredSpeed = 0.f;
+        std::vector<CCRect> nearby;
     };
 
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects))
-            return false;
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+
         m_fields->overlay = CCDrawNode::create();
-        m_fields->overlay->setZOrder(9999);
-        this->addChild(m_fields->overlay);
+        if (m_objectLayer) {
+            // The predicted points are WORLD coordinates, not screen coordinates.
+            // Put the draw node in the same transformed layer as the objects.
+            m_objectLayer->addChild(m_fields->overlay, 9999);
+        } else {
+            this->addChild(m_fields->overlay, 9999);
+        }
+
+        m_fields->status = CCLabelBMFont::create("AUTO OFF", "bigFont.fnt");
+        if (m_fields->status) {
+            m_fields->status->setScale(.32f);
+            m_fields->status->setAnchorPoint({0.f, 1.f});
+            auto size = CCDirector::sharedDirector()->getWinSize();
+            m_fields->status->setPosition({8.f, size.height - 8.f});
+            this->addChild(m_fields->status, 100000);
+        }
         return true;
     }
 
-    void setAutoHold(bool down) {
+    void holdJump(bool down) {
         if (m_fields->held == down) return;
         m_fields->held = down;
+        // Button 1 is Jump for player one on Android.
         this->handleButton(down, 1, true);
     }
 
     void resetLevel() {
-        if (m_fields->held) setAutoHold(false);
-        m_fields->holdFrames = 0;
-        m_fields->lastX = std::numeric_limits<float>::quiet_NaN();
-        m_fields->speed = 0.f;
+        if (m_fields->held) holdJump(false);
+        m_fields->pressFrames = 0;
+        m_fields->previousX = std::numeric_limits<float>::quiet_NaN();
+        m_fields->measuredSpeed = 0.f;
+        m_fields->nearby.clear();
+        m_fields->scanTick = 0;
         PlayLayer::resetLevel();
     }
 
     void onQuit() {
-        if (m_fields->held) setAutoHold(false);
+        if (m_fields->held) holdJump(false);
         PlayLayer::onQuit();
     }
 
-    static bool intersects(CCRect const& a, CCRect const& b) {
+    bool isSupported(PlayerObject* p) const {
+        return !m_isPlatformer && !p->m_isDead &&
+               !p->m_isShip && !p->m_isBird && !p->m_isBall &&
+               !p->m_isDart && !p->m_isRobot && !p->m_isSpider &&
+               !p->m_isSwing && !p->m_isGoingLeft;
+    }
+
+    static bool overlaps(CCRect const& a, CCRect const& b) {
         return a.origin.x < b.origin.x + b.size.width &&
-               a.origin.x + a.size.width > b.origin.x &&
+               b.origin.x < a.origin.x + a.size.width &&
                a.origin.y < b.origin.y + b.size.height &&
-               a.origin.y + a.size.height > b.origin.y;
+               b.origin.y < a.origin.y + a.size.height;
     }
 
-    bool isCubeMode(PlayerObject* player) {
-        return !m_isPlatformer && !player->m_isDead &&
-            !player->m_isShip && !player->m_isBird &&
-            !player->m_isBall && !player->m_isDart &&
-            !player->m_isRobot && !player->m_isSpider &&
-            !player->m_isSwing && !player->m_isGoingLeft;
-    }
-
-    // Predictor in world coordinates. Speed is measured from actual gameplay.
-    // A simple ballistics approximation is used ONLY for evaluating jumps.
-    std::vector<CCPoint> predict(PlayerObject* player, bool click, float speed, float horizon) {
-        std::vector<CCPoint> out;
-        CCPoint pos = player->getPosition();
-        auto const startY = pos.y;
-        auto const dt = 1.f / 60.f;
+    std::vector<CCPoint> predict(PlayerObject* player, bool jump, float speed, float horizon) {
+        std::vector<CCPoint> path;
+        auto p = player->getPosition();
+        auto ground = p.y;
         float direction = player->m_isUpsideDown ? -1.f : 1.f;
+        // These are approximate per-60-Hz-tick velocities, NOT accurate game physics.
         float vy = static_cast<float>(player->m_yVelocity);
-        if (player->m_isOnGround) vy = click ? 11.8f * direction : 0.f;
-        float gravity = -0.88f * direction;
-        int count = std::clamp(static_cast<int>(horizon / dt), 1, 120);
-        out.reserve(count);
-        for (int i = 0; i < count; ++i) {
-            pos.x += speed * dt;
-            pos.y += vy;
+        if (player->m_isOnGround) vy = jump ? 11.18f * direction : 0.f;
+        float gravity = -.88f * direction;
+        auto steps = std::clamp(static_cast<int>(horizon * 60.f), 1, 90);
+        path.reserve(steps);
+        for (int i = 0; i < steps; ++i) {
+            p.x += speed / 60.f;
+            p.y += vy;
             vy += gravity;
-            // Ground is approximated as a plane through the current player.
-            if (player->m_isOnGround && (pos.y - startY) * direction < 0.f) {
-                pos.y = startY;
+            if (player->m_isOnGround && ((p.y - ground) * direction < 0.f)) {
+                p.y = ground;
                 vy = 0.f;
             }
-            out.push_back(pos);
+            path.push_back(p);
         }
-        return out;
+        return path;
     }
 
-    std::vector<CCRect> nearbyHazards(PlayerObject* player, float speed, float horizon) {
-        std::vector<CCRect> result;
-        auto p = player->getPosition();
-        float reach = std::clamp(speed * horizon + 45.f, 60.f, 550.f);
-        CCRect area(p.x - 20.f, p.y - 145.f, reach + 35.f, 290.f);
-        // Uses the game's hazard classification instead of guessing object IDs.
-        auto* objects = this->damagingObjectsInRect(area, true);
-        if (!objects) return result;
-        for (auto* obj : CCArrayExt<GameObject*>(objects)) {
-            if (!obj || obj->m_isDisabled || obj->m_isDisabled2) continue;
-            CCRect r = obj->getObjectRect();
-            if (r.size.width <= 0.f || r.size.height <= 0.f) continue;
-            if (r.origin.x + r.size.width < p.x - 30.f) continue;
-            if (r.origin.x > p.x + reach) continue;
-            result.push_back(r);
+    std::vector<CCRect> gatherHazards(CCPoint center, float reach) {
+        std::vector<CCRect> boxes;
+        // Iterate actual loaded objects, since damagingObjectsInRect can be empty
+        // when the object is not yet in the engine's collision candidate set.
+        if (m_objects) {
+            for (auto* obj : CCArrayExt<GameObject*>(m_objects)) {
+                if (!obj || obj->m_isDisabled || obj->m_isDisabled2) continue;
+                if (obj->m_objectType != GameObjectType::Hazard &&
+                    obj->m_objectType != GameObjectType::AnimatedHazard)
+                    continue;
+                auto r = obj->getObjectRect();
+                if (r.size.width <= .1f || r.size.height <= .1f) continue;
+                if (r.origin.x + r.size.width < center.x - 35.f ||
+                    r.origin.x > center.x + reach) continue;
+                if (r.origin.y > center.y + 70.f ||
+                    r.origin.y + r.size.height < center.y - 70.f) continue;
+                boxes.push_back(r);
+            }
         }
-        return result;
+
+        // Fallback to the engine's collision-area query if its loaded objects
+        // list did not contain nearby hazards (different level configurations).
+        if (boxes.empty()) {
+            auto* arr = damagingObjectsInRect(
+                CCRect(center.x - 35.f, center.y - 105.f, reach + 70.f, 210.f), true
+            );
+            if (arr) {
+                for (auto* obj : CCArrayExt<GameObject*>(arr)) {
+                    if (!obj || obj->m_isDisabled || obj->m_isDisabled2) continue;
+                    auto r = obj->getObjectRect();
+                    if (r.size.width > .1f && r.size.height > .1f &&
+                        r.origin.x + r.size.width >= center.x - 35.f &&
+                        r.origin.x < center.x + reach)
+                        boxes.push_back(r);
+                }
+            }
+        }
+        return boxes;
     }
 
-    bool collides(CCPoint point, std::vector<CCRect> const& hazards, float halfSize) {
-        CCRect box(point.x - halfSize, point.y - halfSize, halfSize * 2.f, halfSize * 2.f);
-        for (auto const& rect : hazards)
-            if (intersects(box, rect)) return true;
+    bool wouldHit(std::vector<CCPoint> const& path, float halfSize) {
+        for (auto const& point : path) {
+            CCRect box(point.x - halfSize, point.y - halfSize,
+                       2.f * halfSize, 2.f * halfSize);
+            for (auto const& danger : m_fields->nearby) {
+                if (overlaps(box, danger)) return true;
+            }
+        }
         return false;
     }
 
     void drawPath(std::vector<CCPoint> const& path, ccColor4F color) {
         if (!m_fields->overlay) return;
         for (size_t i = 1; i < path.size(); ++i)
-            m_fields->overlay->drawSegment(path[i - 1], path[i], .8f, color);
+            m_fields->overlay->drawSegment(path[i - 1], path[i], 1.3f, color);
+    }
+
+    void updateStatus(std::string message, bool enabled) {
+        if (!m_fields->status) return;
+        // Avoid rebuilding an atlas label every video frame.
+        if (++m_fields->statusTick % 6 != 0) return;
+        m_fields->status->setString(message.c_str());
+        m_fields->status->setColor(enabled ? ccc3(120, 255, 135)
+                                          : ccc3(255, 170, 95));
     }
 
     void update(float dt) {
         PlayLayer::update(dt);
 
-        auto* player = m_player1;
-        if (!player) return;
-        auto const pos = player->getPosition();
-
-        // Keep a press held during at least one complete game update.
-        bool wasHolding = m_fields->holdFrames > 0;
-        if (wasHolding) {
-            --m_fields->holdFrames;
-            if (m_fields->holdFrames == 0) setAutoHold(false);
-        }
-
-        if (std::isfinite(m_fields->lastX) && dt > .0001f && dt < .1f) {
-            float measured = (pos.x - m_fields->lastX) / dt;
-            if (measured > 30.f && measured < 1200.f)
-                m_fields->speed = measured;
-        }
-        m_fields->lastX = pos.x;
-
+        auto* p = m_player1;
+        if (!p) return;
         if (m_fields->overlay) m_fields->overlay->clear();
-        if (!Mod::get()->getSettingValue<bool>("enabled") || !isCubeMode(player)) {
-            if (m_fields->held) setAutoHold(false);
-            m_fields->holdFrames = 0;
+
+        if (m_fields->pressFrames > 0) {
+            if (--m_fields->pressFrames == 0) holdJump(false);
+        }
+
+        bool enabled = Mod::get()->getSettingValue<bool>("enabled");
+        if (!enabled || !isSupported(p)) {
+            if (m_fields->held) holdJump(false);
+            m_fields->pressFrames = 0;
+            updateStatus(!enabled ? "AUTO OFF" : "AUTO: CUBE ONLY", false);
             return;
         }
 
-        float speed = m_fields->speed;
-        if (speed < 30.f) return;  // Don't guess speed until movement is measured.
+        auto current = p->getPosition();
 
-        auto horizon = static_cast<float>(Mod::get()->getSettingValue<double>("lookahead"));
-        horizon = std::clamp(horizon, .15f, 1.5f);
-        auto hazards = nearbyHazards(player, speed, horizon);
-        auto neutral = predict(player, false, speed, horizon);
-        auto jumped  = predict(player, true,  speed, horizon);
+        if (std::isfinite(m_fields->previousX) && dt > .00001f && dt < .15f) {
+            float deltaSpeed = (current.x - m_fields->previousX) / dt;
+            if (deltaSpeed > 50.f && deltaSpeed < 1600.f) {
+                if (m_fields->measuredSpeed == 0.f)
+                    m_fields->measuredSpeed = deltaSpeed;
+                else
+                    m_fields->measuredSpeed = .75f * m_fields->measuredSpeed + .25f * deltaSpeed;
+            }
+        }
+        m_fields->previousX = current.x;
+        // GD's playerSpeed is in approximate world units per simulation tick.
+        float estimatedSpeed = std::clamp(
+            static_cast<float>(std::abs(p->m_playerSpeed)) * 60.f,
+            200.f, 750.f
+        );
+        float speed = m_fields->measuredSpeed > 50.f
+                    ? m_fields->measuredSpeed : estimatedSpeed;
+
+        float horizon = std::clamp(
+            static_cast<float>(Mod::get()->getSettingValue<double>("lookahead")),
+            .15f, 1.5f
+        );
+        float reach = std::clamp(speed * horizon + 60.f, 100.f, 600.f);
+
+        if ((++m_fields->scanTick % 4 == 1) || m_fields->nearby.empty() && m_fields->scanTick == 1)
+            m_fields->nearby = gatherHazards(current, reach);
+
+        auto neutral = predict(p, false, speed, horizon);
+        auto jumped = predict(p, true, speed, horizon);
 
         if (Mod::get()->getSettingValue<bool>("debug-draw")) {
-            drawPath(neutral, {1.f, .32f, .32f, .8f});
-            drawPath(jumped, {.20f, 1.f, .42f, .8f});
+            drawPath(neutral, {1.f, .23f, .18f, .95f});
+            drawPath(jumped, {.10f, 1.f, .20f, .95f});
         }
 
-        if (wasHolding || !player->m_isOnGround || hazards.empty()) return;
-
-        // Look for an imminent impact when NOT jumping.
-        // At the moment of expected impact, check that jumping would
-        // actually put the cube outside the estimated hazard bounds.
-        float halfSize = player->m_vehicleSize < .9f ? 5.5f : 10.0f;
-        int imminentFrames = std::clamp(
-            static_cast<int>(std::ceil(.17f * 60.f)), 5, 16
-        );
-        int steps = std::min<int>(imminentFrames, neutral.size());
-        for (int i = 0; i < steps; ++i) {
-            if (!collides(neutral[i], hazards, halfSize)) continue;
-            // This comparison is the actual trajectory-based click decision.
-            if (i < static_cast<int>(jumped.size()) &&
-                !collides(jumped[i], hazards, halfSize)) {
-                setAutoHold(true);
-                m_fields->holdFrames = 1;
-            }
-            break;
+        float halfSize = p->m_vehicleSize < .9f ? 6.f : 12.f;
+        // Find the nearest hazard at ground height, ahead of the cube.
+        float closest = std::numeric_limits<float>::infinity();
+        for (auto const& r : m_fields->nearby) {
+            if (r.origin.y > current.y + 28.f ||
+                r.origin.y + r.size.height < current.y - 25.f)
+                continue;
+            float distance = r.origin.x - (current.x + halfSize);
+            if (distance >= -8.f && distance < closest)
+                closest = distance;
         }
+
+        // Choose a jump initiation distance proportional to movement speed.
+        // Deliberately early enough for a spike in basic cube gameplay.
+        float triggerDistance = std::clamp(speed * .19f + 16.f, 55.f, 110.f);
+        bool nearThreat = std::isfinite(closest) &&
+                          closest <= triggerDistance &&
+                          closest >= -8.f;
+
+        // Compute whether neutral trajectory intersects known hazards. The
+        // proximity fallback remains active because the approximate predictor
+        // cannot reproduce every game's collision geometry.
+        bool neutralThreat = wouldHit(neutral, halfSize);
+        if (nearThreat && p->m_isOnGround && m_fields->pressFrames == 0) {
+            holdJump(true);
+            m_fields->pressFrames = 2;
+            ++m_fields->jumps;
+        }
+
+        std::string status = "AUTO ON | H:" + std::to_string(m_fields->nearby.size())
+            + " | J:" + std::to_string(m_fields->jumps);
+        if (nearThreat && p->m_isOnGround) status += " JUMP!";
+        else if (neutralThreat) status += " THREAT";
+        updateStatus(status, true);
     }
 };
