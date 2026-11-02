@@ -21,6 +21,12 @@ jobs:
         target: [Android64, Android32]
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure Ninja is executable
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build
+          command -v ninja
+          ninja --version
       - name: Build with official Geode SDK action
         id: build
         uses: geode-sdk/build-geode-mod@main
