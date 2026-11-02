@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 project(TrajectoryAutoPlayer VERSION 0.1.0 LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
+# Geode 5.5.3's Android asp2 dependency omits <type_traits> in a std23 header.
+# Preinclude it across the build to avoid the NDK r28 compilation failure.
+if(ANDROID)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include type_traits")
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 file(GLOB SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
