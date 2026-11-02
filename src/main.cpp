@@ -9,7 +9,7 @@
 
 using namespace geode::prelude;
 
-// v0.3.0: Experimental forward cube auto-jumper.
+// v0.3.1: Experimental forward cube auto-jumper with one enable switch.
 // Draws both hypothetical trajectories, detects upcoming GameObjectType::Hazard
 // and AnimatedHazard, and presses Jump automatically at a calculated approach
 // distance. It is not an exact collision simulator or a level-solving bot.
@@ -39,7 +39,7 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
             this->addChild(m_fields->overlay, 9999);
         }
 
-        m_fields->status = CCLabelBMFont::create("AUTO OFF", "bigFont.fnt");
+        m_fields->status = CCLabelBMFont::create("AUTO ON", "bigFont.fnt");
         if (m_fields->status) {
             m_fields->status->setScale(.32f);
             m_fields->status->setAnchorPoint({0.f, 1.f});
@@ -187,11 +187,13 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
             if (--m_fields->pressFrames == 0) holdJump(false);
         }
 
-        bool enabled = Mod::get()->getSettingValue<bool>("enabled");
-        if (!enabled || !isSupported(p)) {
+        // Geode's mod-level Enabled toggle controls whether this mod runs.
+        // There is intentionally no second independent "enabled" setting.
+        // The old duplicate toggle could be OFF even with the mod enabled.
+        if (!isSupported(p)) {
             if (m_fields->held) holdJump(false);
             m_fields->pressFrames = 0;
-            updateStatus(!enabled ? "AUTO OFF" : "AUTO: CUBE ONLY", false);
+            updateStatus("AUTO: CUBE ONLY", false);
             return;
         }
 
