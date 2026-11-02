@@ -3,11 +3,11 @@
   "gd": {
     "android": "2.2081"
   },
-  "version": "v0.3.1",
+  "version": "v0.3.2",
   "id": "trajectory.autoplayer",
-  "name": "Trajectory AutoPlayer (Cube Test)",
+  "name": "Trajectory AutoPlayer (Cube Debug)",
   "developer": "Community Prototype",
-  "description": "Cube-mode auto-jump with a single Geode enable switch, trajectory paths and diagnostics; experimental.",
+  "description": "Experimental cube auto-jump; includes optional one-time test tap and HUD to diagnose inputs and hazard detection.",
   "tags": [
     "gameplay",
     "cheat"
@@ -24,6 +24,12 @@
       "type": "bool",
       "name": "Draw predicted arcs",
       "default": true
+    },
+    "test-click": {
+      "type": "bool",
+      "name": "Test jump once after 1 second",
+      "description": "For debugging: perform one automatic jump per attempt, even without an obstacle. Use on a practice level.",
+      "default": false
     }
   }
 }
