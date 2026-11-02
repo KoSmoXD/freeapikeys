@@ -100,9 +100,7 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
         // Uses the game's hazard classification instead of guessing object IDs.
         auto* objects = this->damagingObjectsInRect(area, true);
         if (!objects) return result;
-        CCObject* raw = nullptr;
-        CCARRAY_FOREACH(objects, raw) {
-            auto* obj = static_cast<GameObject*>(raw);
+        for (auto* obj : CCArrayExt<GameObject*>(objects)) {
             if (!obj || obj->m_isDisabled || obj->m_isDisabled2) continue;
             CCRect r = obj->getObjectRect();
             if (r.size.width <= 0.f || r.size.height <= 0.f) continue;
