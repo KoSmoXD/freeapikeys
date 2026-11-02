@@ -1,0 +1,76 @@
+name: Android Geode build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/android.yml'
+      - 'CMakeLists.txt'
+      - 'mod.json'
+      - 'src/**'
+
+jobs:
+  android:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [Android64, Android32]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install required Android NDK r28
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --install 'ndk;28.2.13676358'
+          test -f "$ANDROID_HOME/ndk/28.2.13676358/build/cmake/android.toolchain.cmake"
+      - name: Ensure Ninja is executable
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build
+          command -v ninja
+          ninja --version
+      - name: Build with official Geode SDK action
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          target: ${{ matrix.target }}
+          android-ndk-version: '28.2.13676358'
+          use-lto: 'false'
+          combine: 'true'
+
+  combine:
+    name: Package universal Android mod
+    runs-on: ubuntu-latest
+    needs: [android]
+    steps:
+      - name: Merge both Android platform binaries
+        id: merge
+        uses: geode-sdk/build-geode-mod/combine@main
+        with:
+          delete-artifacts: 'false'
+      - name: Check both platforms are in the .geode file
+        env:
+          PACKAGE_DIR: ${{ steps.merge.outputs.build-output }}
+        run: |
+          python3 - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          packages = list(Path(os.environ["PACKAGE_DIR"]).glob("*.geode"))
+          assert len(packages) == 1, f"Expected one combined mod, found {packages}"
+          with zipfile.ZipFile(packages[0]) as mod:
+              names = set(mod.namelist())
+              expected = {
+                  "mod.json",
+                  "trajectory.autoplayer.android32.so",
+                  "trajectory.autoplayer.android64.so"
+              }
+              missing = expected - names
+              assert not missing, f"Missing platform binaries in final package: {missing}"
+              print("Verified combined .geode contains:", *sorted(expected), sep="\n  ")
+          PY
+      - name: Upload one package compatible with Android32 and Android64
+        uses: actions/upload-artifact@v4
+        with:
+          name: trajectory-autoplayer-Android-Universal
+          path: ${{ steps.merge.outputs.build-output }}/*.geode
+          if-no-files-found: error

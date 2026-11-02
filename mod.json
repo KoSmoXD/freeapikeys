@@ -1,0 +1,35 @@
+{
+  "geode": "5.5.3",
+  "gd": {
+    "android": "2.2081"
+  },
+  "version": "v0.3.2",
+  "id": "trajectory.autoplayer",
+  "name": "Trajectory AutoPlayer (Cube Debug)",
+  "developer": "Community Prototype",
+  "description": "Experimental cube auto-jump; includes optional one-time test tap and HUD to diagnose inputs and hazard detection.",
+  "tags": [
+    "gameplay",
+    "cheat"
+  ],
+  "settings": {
+    "lookahead": {
+      "type": "float",
+      "name": "Lookahead (seconds)",
+      "default": 0.65,
+      "min": 0.15,
+      "max": 1.5
+    },
+    "debug-draw": {
+      "type": "bool",
+      "name": "Draw predicted arcs",
+      "default": true
+    },
+    "test-click": {
+      "type": "bool",
+      "name": "Test jump once after 1 second",
+      "description": "For debugging: perform one automatic jump per attempt, even without an obstacle. Use on a practice level.",
+      "default": false
+    }
+  }
+}
