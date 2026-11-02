@@ -2,8 +2,6 @@ name: Android Geode build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [trajectory-autoplayer-android]
   pull_request:
     paths:
       - '.github/workflows/android.yml'
@@ -21,6 +19,10 @@ jobs:
         target: [Android64, Android32]
     steps:
       - uses: actions/checkout@v4
+      - name: Install required Android NDK r28
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --install 'ndk;28.2.13676358'
+          test -f "$ANDROID_HOME/ndk/28.2.13676358/build/cmake/android.toolchain.cmake"
       - name: Ensure Ninja is executable
         run: |
           sudo apt-get update -qq
