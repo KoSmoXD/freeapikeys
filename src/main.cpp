@@ -173,7 +173,7 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
         // Look for an imminent impact when NOT jumping.
         // At the moment of expected impact, check that jumping would
         // actually put the cube outside the estimated hazard bounds.
-        float halfSize = player->m_isMini ? 5.5f : 10.0f;
+        float halfSize = player->m_vehicleSize < .9f ? 5.5f : 10.0f;
         int imminentFrames = std::clamp(
             static_cast<int>(std::ceil(.17f * 60.f)), 5, 16
         );
