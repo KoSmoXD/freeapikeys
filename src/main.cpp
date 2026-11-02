@@ -24,6 +24,8 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
         int statusTick = 0;
         float previousX = std::numeric_limits<float>::quiet_NaN();
         float measuredSpeed = 0.f;
+        float testElapsed = 0.f;
+        bool testTapSent = false;
         std::vector<CCRect> nearby;
     };
 
@@ -64,6 +66,8 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
         m_fields->measuredSpeed = 0.f;
         m_fields->nearby.clear();
         m_fields->scanTick = 0;
+        m_fields->testElapsed = 0.f;
+        m_fields->testTapSent = false;
         PlayLayer::resetLevel();
     }
 
@@ -128,6 +132,19 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
                     r.origin.y + r.size.height < center.y - 70.f) continue;
                 boxes.push_back(r);
             }
+        }
+
+        // The collision pipeline also maintains a nearby-hazard list.
+        // Include it for levels which don't populate m_objects predictably.
+        for (auto* obj : m_hazardCollisionObjects) {
+            if (!obj || obj->m_isDisabled || obj->m_isDisabled2) continue;
+            auto r = obj->getObjectRect();
+            if (r.size.width <= .1f || r.size.height <= .1f) continue;
+            if (r.origin.x + r.size.width < center.x - 35.f ||
+                r.origin.x > center.x + reach) continue;
+            if (r.origin.y > center.y + 70.f ||
+                r.origin.y + r.size.height < center.y - 70.f) continue;
+            boxes.push_back(r);
         }
 
         // Fallback to the engine's collision-area query if its loaded objects
@@ -235,6 +252,19 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
         }
 
         float halfSize = p->m_vehicleSize < .9f ? 6.f : 12.f;
+        // Optional diagnostic tap: confirms that the input path works even
+        // if no hazards are found. Off by default, use a practice level.
+        if (!m_fields->testTapSent && Mod::get()->getSettingValue<bool>("test-click") &&
+            p->m_isOnGround && m_fields->pressFrames == 0) {
+            m_fields->testElapsed += std::clamp(dt, 0.f, .1f);
+            if (m_fields->testElapsed >= 1.0f) {
+                holdJump(true);
+                m_fields->pressFrames = 2;
+                m_fields->testTapSent = true;
+                ++m_fields->jumps;
+            }
+        }
+
         // Find the nearest hazard at ground height, ahead of the cube.
         float closest = std::numeric_limits<float>::infinity();
         for (auto const& r : m_fields->nearby) {
@@ -265,7 +295,9 @@ class $modify(TrajectoryAutoPlayer, PlayLayer) {
 
         std::string status = "AUTO ON | H:" + std::to_string(m_fields->nearby.size())
             + " | J:" + std::to_string(m_fields->jumps);
-        if (nearThreat && p->m_isOnGround) status += " JUMP!";
+        if (m_fields->testTapSent && Mod::get()->getSettingValue<bool>("test-click"))
+            status += " TEST SENT";
+        else if (nearThreat && p->m_isOnGround) status += " JUMP!";
         else if (neutralThreat) status += " THREAT";
         updateStatus(status, true);
     }
